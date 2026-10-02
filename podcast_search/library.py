@@ -13,9 +13,9 @@ import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from pathlib import Path
+from .config import ROOT
 
-LIBRARY = Path(__file__).parent / "library"
+LIBRARY = ROOT / "library"
 UA = {"User-Agent": "Mozilla/5.0 (podcast-search prototype)"}
 NS = {"itunes": "http://www.itunes.com/dtds/podcast-1.0.dtd", "content": "http://purl.org/rss/1.0/modules/content/"}
 

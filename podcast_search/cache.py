@@ -14,7 +14,9 @@ import sqlite3
 import time
 from pathlib import Path
 
-DB = Path(__file__).parent / "cache.sqlite"
+from .config import ROOT
+
+DB = ROOT / "cache.sqlite"
 
 
 def question_hash(q: dict) -> str:

@@ -23,16 +23,20 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from datetime import datetime, timedelta
-from pathlib import Path
+import sys
 
-import library
+from . import library
+from .config import ROOT
 
-HERE = Path(__file__).parent
-TOKEN = HERE / ".spotify_token.json"
+TOKEN = ROOT / ".spotify_token.json"
 REDIRECT = "http://127.0.0.1:8888/callback"
 # market=from_token now needs more scope than this (403 "Insufficient client scope"), so no market param is sent.
 SCOPES = "user-library-modify user-library-read user-read-playback-position"
 API = "https://api.spotify.com/v1"
+
+
+def log(*a):
+    print(*a, file=sys.stderr, flush=True)
 
 
 def client_id() -> str:
@@ -87,7 +91,7 @@ def login(timeout: int = 300):
 
     server = http.server.HTTPServer(("127.0.0.1", 8888), Handler)
     server.timeout = 1
-    print("Opening Spotify in your browser. If it doesn't open, visit:\n" + url, flush=True)
+    log("Opening Spotify in your browser. If it doesn't open, visit:\n" + url, flush=True)
     webbrowser.open(url)
     deadline = time.time() + timeout
     while not got and time.time() < deadline:
@@ -98,7 +102,7 @@ def login(timeout: int = 300):
     tok = _token_request({"grant_type": "authorization_code", "code": got["code"], "redirect_uri": REDIRECT,
                           "client_id": client_id(), "code_verifier": verifier})
     _save_token(tok)
-    print("signed in; token saved to .spotify_token.json")
+    log("signed in; token saved to .spotify_token.json")
 
 
 def access_token() -> str:
@@ -151,7 +155,7 @@ def find_show(title: str) -> dict:
         raise SystemExit(f"no Spotify show found for '{title}'")
     exact = [s for s in shows if _norm(s["name"]) == _norm(title)]
     best = exact[0] if exact else max(shows, key=lambda s: difflib.SequenceMatcher(None, _norm(s["name"]), _norm(title)).ratio())
-    print(f"Spotify show: {best['name']} ({best.get('total_episodes', '?')} episodes)")
+    log(f"Spotify show: {best['name']} ({best.get('total_episodes', '?')} episodes)")
     return best
 
 
@@ -196,12 +200,12 @@ def link(slug: str | None) -> dict:
     data = {"show_id": show["id"], "show_name": show["name"], "linked": time.strftime("%Y-%m-%d %H:%M"),
             "episodes": mapping, "unmatched": unmatched}
     (library.LIBRARY / pod["slug"] / "spotify.json").write_text(json.dumps(data, indent=1))
-    print(f"matched {len(mapping)}/{len(pod['episodes'])} episodes  ({', '.join(f'{v} by {k}' for k, v in how.items())})"
+    log(f"matched {len(mapping)}/{len(pod['episodes'])} episodes  ({', '.join(f'{v} by {k}' for k, v in how.items())})"
           f"; Spotify lists {len(sp)}")
     for t in unmatched[:10]:
-        print(f"  unmatched: {t[:80]}")
+        log(f"  unmatched: {t[:80]}")
     if len(unmatched) > 10:
-        print(f"  ... and {len(unmatched) - 10} more")
+        log(f"  ... and {len(unmatched) - 10} more")
     return data
 
 
@@ -209,25 +213,34 @@ def mapping_for(slug: str) -> dict:
     f = library.LIBRARY / slug / "spotify.json"
     return json.loads(f.read_text()) if f.exists() else link(slug)
 
+
+def existing_mapping(slug: str) -> dict:
+    """The stored guid -> Spotify episode mapping, without contacting Spotify (empty if never linked)."""
+    f = library.LIBRARY / slug / "spotify.json"
+    return json.loads(f.read_text())["episodes"] if f.exists() else {}
+
+
+def episode_url(spotify_id: str) -> str:
+    return f"https://open.spotify.com/episode/{spotify_id}"
+
 # ---------------------------------------------------------------- saving
 
-def save(slug: str, episodes: list[dict]):
-    """Save RSS episodes (dicts with guid/title) to the user's Your Episodes, then confirm with Spotify
-    that each one is actually in the library - a 200 from the save call alone isn't treated as proof."""
+def save(slug: str, episodes: list[dict]) -> list[dict]:
+    """Save RSS episodes (dicts with guid/title) to the user's Your Episodes, then confirm with Spotify that
+    each one is actually in the library - a 200 from the save call alone isn't treated as proof.
+    Returns one result per episode: status is "confirmed", "not_confirmed" or "no_spotify_match"."""
     m = mapping_for(slug)["episodes"]
     found = [(e, m[e["guid"]]) for e in episodes if e["guid"] in m]
-    missing = [e for e in episodes if e["guid"] not in m]
     confirmed = []
     for i in range(0, len(found), 40):                      # both endpoints take at most 40 URIs
         uris = ",".join(sp["uri"] for _, sp in found[i:i + 40])
         api("PUT", "/me/library", {"uris": uris})
         confirmed += api("GET", "/me/library/contains", {"uris": uris})
-    for (e, sp), ok in zip(found, confirmed):
-        status = "saved, confirmed in library" if ok else "NOT in library after saving"
-        print(f"  {status:30s} {e['title'][:62]}\n  {'':30s} https://open.spotify.com/episode/{sp['id']}")
-    for e in missing:
-        print(f"  {'no Spotify match, skipped':30s} {e['title'][:62]}")
-    n_ok = sum(confirmed)
-    if n_ok < len(found):
-        print(f"  warning: {len(found) - n_ok} episode(s) did not show up in your library")
-    return n_ok
+    ok = {e["guid"]: c for (e, _), c in zip(found, confirmed)}
+    results = []
+    for e in episodes:
+        sp = m.get(e["guid"])
+        results.append({"guid": e["guid"], "title": e["title"],
+                        "status": ("confirmed" if ok[e["guid"]] else "not_confirmed") if sp else "no_spotify_match",
+                        "spotify_url": episode_url(sp["id"]) if sp else None})
+    return results

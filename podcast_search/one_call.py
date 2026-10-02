@@ -3,22 +3,20 @@
 Runs the same query with the episode list in two orders (feed order and reversed).
 If position in a long context matters, the two top-10 lists will differ.
 
-Usage: uv run --env-file .env one_call.py "your query" [--podcast SLUG] [--top 10]
+Usage: uv run python -m podcast_search.one_call "your query" [--podcast SLUG] [--top 10]
 """
 import argparse
 import json
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
 import anthropic
 
-sys.path.insert(0, str(Path(__file__).parent))
-import library  # noqa: E402
-from search import CLAUDE_MODEL  # noqa: E402
+from . import library
+from .cli import CLAUDE_MODEL
+from .config import ROOT, load_env
 
-HERE = Path(__file__).parent
+HERE = ROOT
 PRICE_IN, PRICE_OUT = 5.00, 25.00  # $/MTok, Claude Opus 5
 
 SCHEMA = {
@@ -62,6 +60,7 @@ def ask(client, query, episodes, order, k):
 
 
 def main():
+    load_env()
     ap = argparse.ArgumentParser()
     ap.add_argument("query")
     ap.add_argument("--top", type=int, default=10)
