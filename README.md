@@ -22,6 +22,7 @@ Claude turns a free-form request into 1–4 narrow questions for [TypeSafe's Jev
    ```
    TYPESAFE_API_KEY=...
    SPOTIFY_CLIENT_ID=...      # only needed for saving to Spotify
+   OPENROUTER_API_KEY=...     # only needed for the OpenRouter engines below
    ```
    `ANTHROPIC_API_KEY` (environment or `.env`) is only needed when Claude writes a plan or explains results.
    An agent can write plans itself, with no Claude call.
@@ -45,6 +46,7 @@ podcast-search search --plan-file plan.json [--json]     # a plan you or your ag
 podcast-search search --plan NAME [--json]               # a saved plan
 podcast-search search "your query" [--explain]           # Claude writes the plan
    common options: --podcast SLUG  --save-plan NAME  --top 10
+   --engine: jev (default) | mercury, d1, solar, or-jev (OpenRouter) | jebadiah-9b, decider-4b, decider-2b (local)
 
 podcast-search episode 1-5 [--json]                      # summaries and links for results of the last search
 podcast-search spotify-login                             # once
@@ -56,7 +58,7 @@ uv run python -m podcast_search.one_call "your query"   # baseline: one Claude c
 
 ## How answers are cached
 
-An answer is reused when the podcast, episode (RSS guid), episode text, exact question and Jev model version all match. Weights aren't part of the key, so changing them re-ranks instantly without calling Jev. A repeat search costs nothing, and a new episode costs one call per saved plan.
+An answer is reused when the podcast, episode (RSS guid), episode text, exact question and model (engine and version) all match. Weights aren't part of the key, so changing them re-ranks instantly without calling Jev. A repeat search costs nothing, and a new episode costs one call per saved plan.
 
 ## Files
 

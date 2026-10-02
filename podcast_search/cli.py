@@ -19,6 +19,7 @@ Add --json to list, search, episode and save for machine-readable output.
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 
@@ -39,6 +40,26 @@ JEV_REQ_RATE = 38          # requests per second
 JEV_TOKEN_RATE = 90_000    # tokens per second
 JEV_CONCURRENCY = 24       # in flight at once, so slow responses don't hold back the pace
 JEV_PRICE = 0.042          # $ per million input tokens
+
+# Engines that speak TypeSafe's /v1/systemone. The "model" doubles as the cache key, so answers from different
+# engines are never mixed. Local servers run one request at a time, so they get no rate cap and few in flight.
+ENGINES = {
+    "jev":         {"base_url": None, "model": JEV_MODEL, "local": False, "price": JEV_PRICE},
+    # Hosted decision models on OpenRouter's /v1/systemone (same wire format). Key: OPENROUTER_API_KEY.
+    "or-jev":      {"base_url": "https://openrouter.ai/api", "api_model": "typesafe/jev-1.13", "model": "or:typesafe/jev-1.13",
+                    "key_env": "OPENROUTER_API_KEY", "price": 0.042, "rate": 10, "local": False},
+    "mercury":     {"base_url": "https://openrouter.ai/api", "api_model": "inception/mercury-decide:free",
+                    "model": "or:inception/mercury-decide", "key_env": "OPENROUTER_API_KEY", "price": 0.0, "rate": 0.3, "local": False},
+    "d1":          {"base_url": "https://openrouter.ai/api", "api_model": "liquid/d1", "model": "or:liquid/d1",
+                    "key_env": "OPENROUTER_API_KEY", "price": 0.040, "rate": 10, "local": False},
+    "solar":       {"base_url": "https://openrouter.ai/api", "api_model": "upstage/solar-decide", "model": "or:upstage/solar-decide",
+                    "key_env": "OPENROUTER_API_KEY", "price": 0.050, "rate": 10, "local": False},
+    # Local servers (see README); slow on a laptop.
+    "jebadiah-9b": {"base_url": "http://localhost:8100", "model": "jebadiah-9b-v2-mlx8", "local": True},
+    "decider-4b":  {"base_url": "http://localhost:8001", "model": "decider-4b-v2.1", "local": True},
+    "decider-2b":  {"base_url": "http://localhost:8002", "model": "decider-2b-v11", "local": True},
+}
+LOCAL_CONCURRENCY = 4
 
 JSON_OUT = False
 
@@ -167,8 +188,10 @@ def make_plan(query: str) -> dict:
     return validate_plan(json.loads(next(b.text for b in resp.content if b.type == "text")))
 
 
-def jev_question(q: dict):
-    instr = {"judgment": q["instructions"], "does_not_count": q["does_not_count"]}
+def jev_question(q: dict, as_text: bool = False):
+    # Jev accepts structured instructions; some local servers require one plain-text string.
+    instr = (f"{q['instructions']}\nDoes not count: {q['does_not_count']}" if as_text
+             else {"judgment": q["instructions"], "does_not_count": q["does_not_count"]})
     return Score(instructions=instr, criteria=q["levels"]) if q["kind"] == "score" else Noul(instructions=instr)
 
 
@@ -201,11 +224,12 @@ def read_plan_file(path: str):
 
 # ---------------------------------------------------------------- Jev judges, reusing stored answers
 
-async def judge_all(slug: str, episodes: list, plan: dict, cache: AnswerCache):
+async def judge_all(slug: str, episodes: list, plan: dict, cache: AnswerCache, engine: str = "jev"):
     """Answers for every episode x question. Only (episode, question) pairs not already stored go to Jev,
     and each episode's missing questions are asked together in one call."""
+    eng = ENGINES[engine]
     qh = {q["id"]: question_hash(q) for q in plan["questions"]}
-    known = cache.lookup(slug, JEV_MODEL, set(qh.values()))
+    known = cache.lookup(slug, eng["model"], set(qh.values()))
     answers = [{} for _ in episodes]
     todo = []
     for i, e in enumerate(episodes):
@@ -224,7 +248,8 @@ async def judge_all(slug: str, episodes: list, plan: dict, cache: AnswerCache):
     if not todo:
         return answers, stats
 
-    sem, gate, next_at = asyncio.Semaphore(JEV_CONCURRENCY), asyncio.Lock(), [0.0]
+    sem = asyncio.Semaphore(LOCAL_CONCURRENCY if eng["local"] else 8 if eng.get("rate") else JEV_CONCURRENCY)
+    gate, next_at = asyncio.Lock(), [0.0]
     pending = []
 
     def est_tokens(e, missing) -> int:
@@ -234,30 +259,43 @@ async def judge_all(slug: str, episodes: list, plan: dict, cache: AnswerCache):
         return len(text) // 3 + 100
 
     async def throttle(tokens: int):
+        if eng["local"]:
+            return
         async with gate:
             now = time.perf_counter()
             start = max(now, next_at[0])
-            next_at[0] = start + max(1 / JEV_REQ_RATE, tokens / JEV_TOKEN_RATE)
+            next_at[0] = start + (1 / eng["rate"] if eng.get("rate") else max(1 / JEV_REQ_RATE, tokens / JEV_TOKEN_RATE))
             if start > now:
                 await asyncio.sleep(start - now)
 
-    async with AsyncTypeSafeClient() as jev:
+    if eng["local"]:
+        client_args = {"base_url": eng["base_url"], "api_key": "local-no-key", "timeout": 300.0}
+    elif eng["base_url"]:
+        key = os.environ.get(eng["key_env"])
+        if not key:
+            raise SystemExit(f"{eng['key_env']} is not set (add it to the project's .env)")
+        client_args = {"base_url": eng["base_url"], "api_key": key, "timeout": 120.0}
+    else:
+        client_args = {}
+    async with AsyncTypeSafeClient(**client_args) as jev:
         async def one(i, e, missing):
             async with sem:
                 await throttle(est_tokens(e, missing))
                 r = await jev.system_one(state={"episode": {"title": e["title"], "summary": e["summary"]}},
-                                         questions={qh[q["id"]]: jev_question(q) for q in missing}, model=JEV_MODEL)
+                                         questions={qh[q["id"]]: jev_question(q, eng["local"]) for q in missing},
+                                         **({} if eng["local"] else {"model": eng.get("api_model", eng["model"])}))
             stats["tokens"] += r.usage.input_tokens or 0
             for q in missing:
                 h = qh[q["id"]]
                 if q["kind"] == "score":
                     v = r.scores[h]
-                    ans = {"score": v.score, "max": max(v.probabilities), "confidence": v.confidence}
+                    ans = {"score": v.score, "max": max(v.probabilities), "confidence": v.confidence,
+                           "probabilities": {str(k): round(pr, 4) for k, pr in v.probabilities.items()}}
                 else:
                     ans = {"p": r.nouls[h].noul}
                 answers[i][q["id"]] = ans
-                pending.append((slug, e["guid"], e["content_hash"], h, JEV_MODEL, ans))
-            if len(pending) >= 200:          # save as we go, so an interrupted run keeps its progress
+                pending.append((slug, e["guid"], e["content_hash"], h, eng["model"], ans))
+            if len(pending) >= (20 if eng["local"] else 200):   # save as we go, so an interrupted run keeps its progress
                 cache.store(pending[:]); pending.clear()
 
         await asyncio.gather(*(one(*t) for t in todo))
@@ -348,18 +386,20 @@ def cmd_search(args, cache):
         t0 = time.perf_counter()
         plan = make_plan(query)
         source = f"Claude ({time.perf_counter() - t0:.1f}s): {plan['interpretation']}"
-    say(f"\nPODCAST {pod['title']}\nQUERY   {query or '(none given)'}\nPLAN    {source}\n")
+    say(f"\nPODCAST {pod['title']}\nQUERY   {query or '(none given)'}\nPLAN    {source}\nENGINE  {args.engine}\n")
     print_plan(plan)
 
     t1 = time.perf_counter()
-    answers, st = asyncio.run(judge_all(pod["slug"], episodes, plan, cache))
-    st.update(seconds=round(time.perf_counter() - t1, 1), cost_usd=round(st["tokens"] * JEV_PRICE / 1e6, 5),
+    answers, st = asyncio.run(judge_all(pod["slug"], episodes, plan, cache, args.engine))
+    st.update(seconds=round(time.perf_counter() - t1, 1), engine=args.engine,
+              cost_usd=round(st["tokens"] * ENGINES[args.engine].get("price", 0.0) / 1e6, 5),
               needed=len(episodes) * len(plan["questions"]))
-    say(f"\nJEV     {st['needed']:,} answers needed: {st['from_cache']:,} from cache, {st['asked']:,} asked in "
+    say(f"\nJUDGED  {st['needed']:,} answers needed: {st['from_cache']:,} from cache, {st['asked']:,} asked in "
         f"{st['calls']:,} calls  ({st['seconds']}s, {st['tokens']:,} tokens, ${st['cost_usd']:.4f})\n")
 
     ranked = rank(episodes, answers, plan)
     LAST.write_text(json.dumps({"podcast": pod["slug"], "query": query, "plan_name": args.plan, "plan": plan,
+                                "engine": args.engine,
                                 "ranked": [{"rank_score": sc, "guid": e["guid"], "title": e["title"], "date": e["date"],
                                             "answers": a} for sc, e, a in ranked]}, indent=1))
     saved_path = save_plan(args.save_plan, query, plan) if args.save_plan else None
@@ -507,6 +547,9 @@ Answers are cached, so re-running an unchanged question is free and instant.
    in, they must run `podcast-search spotify-login` themselves (it opens a browser).
 
 `--podcast` takes a slug or unique prefix and can be omitted when the library holds one podcast.
+`--engine` picks who answers: `jev` (TypeSafe's API, the default); hosted models on OpenRouter (`mercury`,
+`d1`, `solar`, `or-jev`; need OPENROUTER_API_KEY); or a local server (`jebadiah-9b`, `decider-4b`,
+`decider-2b`) if one is running. Each engine has its own cache.
 
 ## Reading results
 
@@ -553,6 +596,8 @@ def main():
     s.add_argument("--plan", help="use a saved plan")
     s.add_argument("--plan-file", metavar="PATH", help="use a plan from a JSON file, or - for stdin")
     s.add_argument("--save-plan", metavar="NAME", help="save this run's plan under NAME")
+    s.add_argument("--engine", choices=sorted(ENGINES), default=os.environ.get("PODCAST_SEARCH_ENGINE", "jev"),
+                   help="which decision model answers: jev (TypeSafe's API) or a local server")
     s.add_argument("--top", type=int, default=10)
     s.add_argument("--explain", action="store_true", help="Claude explains the top 5 (needs ANTHROPIC_API_KEY)")
     s.add_argument("--json", action="store_true")
