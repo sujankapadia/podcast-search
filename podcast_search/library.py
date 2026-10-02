@@ -19,8 +19,17 @@ LIBRARY = ROOT / "library"
 UA = {"User-Agent": "Mozilla/5.0 (podcast-search prototype)"}
 NS = {"itunes": "http://www.itunes.com/dtds/podcast-1.0.dtd", "content": "http://purl.org/rss/1.0/modules/content/"}
 
-# Show-notes clean-up: keep the summary and chapter titles, drop links, sponsors and timestamps.
-CUT_MARKERS = ("Printable Expanded", "Episode Reference Links", "Connect:", "********", "Thank you to our sponsors")
+# Show-notes clean-up: keep the summary and chapter titles; drop links, ads, sponsors and timestamps.
+# Everything from the first marker on is removed (case-insensitive), in the summary and in the chapter list.
+CUT_MARKERS = (
+    # Think Fast Talk Smart
+    "Printable Expanded", "Episode Reference Links", "Connect:", "********", "Thank you to our sponsors",
+    # Money For Couples
+    "This episode is brought to you by", "This episode is also brought to you by", "This episode brought to you by",
+    "Links mentioned in this episode", "PODCAST NEWSLETTER", "Apply to be coached",
+)
+# Sponsor sentences in the middle of a summary, with real content after them, are removed one by one.
+PROMO_SENTENCE = re.compile(r"https?://|promo code|\d+% off|sponsoring this episode|sponsored by|brought to you by", re.I)
 GENERIC_CHAPTERS = re.compile(r"introduction|conclusion|final (three )?questions|wrap", re.I)
 
 
@@ -28,16 +37,25 @@ def _text(s: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", s or ""))).strip()
 
 
+def _cut(text: str) -> str:
+    low = text.lower()
+    hits = [low.find(m.lower()) for m in CUT_MARKERS if m.lower() in low]
+    return text[:min(hits)] if hits else text
+
+
+def _drop_promo(text: str) -> str:
+    return " ".join(x for x in re.split(r"(?<=[.!?])\s+", text) if not PROMO_SENTENCE.search(x))
+
+
 def clean(desc: str) -> str:
     chapters = ""
     if "Chapters:" in desc:
         desc, raw = desc.split("Chapters:", 1)
-        titles = [t.strip(" -") for t in re.split(r"\(\d{2}:\d{2}(?::\d{2})?\)", raw) if t.strip(" -")]
+        titles = [t.strip(" -") for t in re.split(r"\(\d{2}:\d{2}(?::\d{2})?\)", _cut(raw)) if t.strip(" -")]
         titles = [t for t in titles if not GENERIC_CHAPTERS.search(t)]
         if titles:
             chapters = " Chapters: " + "; ".join(titles) + "."
-    cut = min([desc.find(m) for m in CUT_MARKERS if m in desc] or [len(desc)])
-    return (desc[:cut].strip() + chapters).strip()
+    return (_drop_promo(_cut(desc)).strip() + chapters).strip()
 
 
 def slugify(title: str, feed_url: str) -> str:
