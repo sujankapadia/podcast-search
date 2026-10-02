@@ -1,0 +1,10 @@
+[project]
+name = "podcast-search"
+version = "0.1.0"
+description = "Search podcast back catalogues with Claude-written questions judged by TypeSafe Jev; save picks to Spotify"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.11.0",
+    "typesafe-sdk>=0.7.2",
+]

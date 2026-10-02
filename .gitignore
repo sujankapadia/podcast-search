@@ -1,0 +1,20 @@
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+
+# Secrets
+.env
+.spotify_token.json
+
+# Local data - rebuilt by `search.py add` and by running searches
+library/
+cache.sqlite
+last_search.json
+last_one_call.json
+
+# Pre-library leftovers, kept locally for reference
+tfts_episodes.json
+tfts_feed.xml
+
+.DS_Store

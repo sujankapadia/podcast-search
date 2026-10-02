@@ -1,0 +1,48 @@
+{
+ "name": "presentation-nerves-topic-only",
+ "query": "practical techniques for managing nerves before a big presentation, but not about job interviews",
+ "saved": "2026-10-02 09:18",
+ "plan": {
+  "interpretation": "The listener wants episodes about calming nerves and performance anxiety before public speaking or a big presentation, ideally with actionable techniques, and explicitly not episodes centered on job interview preparation.",
+  "questions": [
+   {
+    "id": "core_presentation_nerves",
+    "kind": "score",
+    "role": "rank",
+    "weight": 1.0,
+    "instructions": "Judge how centrally this episode is about managing nerves, anxiety or stage fright connected to speaking in front of an audience \u2014 a presentation, pitch, talk, speech or similar high-stakes public speaking moment. Base this on the stated topic, guest and angle in the title and summary. Top levels require that calming or handling the fear/nerves of speaking is the episode's main subject, not a passing mention.",
+    "levels": [
+     "Not about public speaking or performance nerves at all.",
+     "Touches public speaking or anxiety only in passing, or covers general stress/anxiety with no link to speaking in front of people.",
+     "Substantially about public speaking, presenting or pitching, with nerves, confidence or fear discussed as one part of it.",
+     "Largely about the fear, nerves or anxiety of speaking in front of an audience, with the presentation context clear.",
+     "Entirely devoted to managing nerves, stage fright or anxiety before and during a presentation or public talk."
+    ],
+    "does_not_count": "General mental-health or anxiety-disorder episodes with no speaking context; communication or storytelling craft episodes focused only on slide design, structure or persuasion; episodes about performance anxiety in sports or music unless speaking to an audience is the focus."
+   },
+   {
+    "id": "practical_techniques",
+    "kind": "score",
+    "role": "rank",
+    "weight": 0.0,
+    "instructions": "Judge how much the title and summary signal that the episode offers usable techniques, exercises or steps a listener could apply, rather than only discussion, theory or personal narrative. Signals include promises of tips, drills, routines, frameworks, breathing or preparation methods, or a coach walking through what to do.",
+    "levels": [
+     "Purely conversational, theoretical or a personal story with no hint of applicable advice.",
+     "Mostly reflection or research with maybe an implicit takeaway.",
+     "Mixes discussion with some advice or suggested approaches.",
+     "Clearly framed around concrete techniques, steps or routines the listener can try."
+    ],
+    "does_not_count": "Generic promotional phrasing like 'actionable insights' with no indication of what is taught; sales of a course or book without described methods."
+   },
+   {
+    "id": "job_interview_focus",
+    "kind": "noul",
+    "role": "exclude",
+    "weight": 1.0,
+    "instructions": "Judge the probability that this episode is mainly about job interviews \u2014 interview preparation, answering interview questions, hiring, recruiting, resumes or landing a job.",
+    "levels": [],
+    "does_not_count": "A brief mention of interviews as one of several high-pressure situations does not make the episode mainly about job interviews; neither does an episode that simply features an interview-format conversation."
+   }
+  ]
+ }
+}
