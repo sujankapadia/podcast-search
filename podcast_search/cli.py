@@ -32,8 +32,12 @@ PLANS = ROOT / "plans"
 LAST = ROOT / "last_search.json"
 CLAUDE_MODEL = "claude-opus-5"
 JEV_MODEL = "jev-1.13.0"   # pinned: cached answers are only valid for the model that gave them
-JEV_RATE = 18              # requests/second, under TypeSafe's 1,200/min
-JEV_CONCURRENCY = 12
+# TypeSafe's published limits (docs.typesafe.ai/models, Oct 2026): 40 requests/s and 100K tokens/s,
+# "adjusting dynamically". Each request is paced by whichever limit is tighter for it, with a little
+# headroom so ordinary timing jitter doesn't trip a 429. If the limits drop, the SDK retries with backoff.
+JEV_REQ_RATE = 38          # requests per second
+JEV_TOKEN_RATE = 90_000    # tokens per second
+JEV_CONCURRENCY = 24       # in flight at once, so slow responses don't hold back the pace
 JEV_PRICE = 0.042          # $ per million input tokens
 
 JSON_OUT = False
@@ -220,20 +224,27 @@ async def judge_all(slug: str, episodes: list, plan: dict, cache: AnswerCache):
     if not todo:
         return answers, stats
 
-    sem, gate, last = asyncio.Semaphore(JEV_CONCURRENCY), asyncio.Lock(), [0.0]
+    sem, gate, next_at = asyncio.Semaphore(JEV_CONCURRENCY), asyncio.Lock(), [0.0]
     pending = []
 
-    async def throttle():
+    def est_tokens(e, missing) -> int:
+        # Conservative: ~3 characters per token for the state plus the questions sent with it.
+        text = e["title"] + e["summary"] + "".join(
+            q["instructions"] + q["does_not_count"] + "".join(q["levels"]) for q in missing)
+        return len(text) // 3 + 100
+
+    async def throttle(tokens: int):
         async with gate:
-            wait = last[0] + 1 / JEV_RATE - time.perf_counter()
-            if wait > 0:
-                await asyncio.sleep(wait)
-            last[0] = time.perf_counter()
+            now = time.perf_counter()
+            start = max(now, next_at[0])
+            next_at[0] = start + max(1 / JEV_REQ_RATE, tokens / JEV_TOKEN_RATE)
+            if start > now:
+                await asyncio.sleep(start - now)
 
     async with AsyncTypeSafeClient() as jev:
         async def one(i, e, missing):
             async with sem:
-                await throttle()
+                await throttle(est_tokens(e, missing))
                 r = await jev.system_one(state={"episode": {"title": e["title"], "summary": e["summary"]}},
                                          questions={qh[q["id"]]: jev_question(q) for q in missing}, model=JEV_MODEL)
             stats["tokens"] += r.usage.input_tokens or 0
@@ -489,7 +500,7 @@ Answers are cached, so re-running an unchanged question is free and instant.
    To explain or check picks, read the summaries: `podcast-search episode 1-5 --json`. Explain them
    yourself; flag any that only partly fit.
 5. Refine on feedback. Changing weights or roles re-ranks from cache for free. Changing a question's
-   wording, levels or does_not_count asks Jev again for every episode (about 20s and 1-2 cents per 300).
+   wording, levels or does_not_count asks Jev again for every episode (about 10s and 1-2 cents per 300).
 6. If the user is happy with the plan, re-run with `--save-plan NAME` so it can be reused.
 7. Spotify: ask the user before saving anything to their library. Then `podcast-search save 1-5 --json`;
    each result is "confirmed", "not_confirmed" or "no_spotify_match". If it says the user is not signed
