@@ -69,3 +69,7 @@ An answer is reused when the podcast, episode (RSS guid), episode text, exact qu
 | `library/` | fetched episodes and Spotify mappings | no (rebuilt by `add`) |
 | `cache.sqlite` | stored Jev answers | no |
 | `.env`, `.spotify_token.json` | secrets | no |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
