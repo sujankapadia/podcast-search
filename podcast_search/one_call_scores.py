@@ -5,7 +5,7 @@ per-episode answer to each question in the plan, so its output can be stored and
 re-ranked the same way Jev's answers are. It measures time, cost and completeness, and
 compares the resulting ranking with Jev's stored answers for the same plan.
 
-Usage: uv run python -m podcast_search.one_call_scores --plan NAME [--podcast SLUG] [--reversed]
+Usage: uv run python -m podcast_search.one_call_scores --plan NAME [--podcast SLUG] [--model ID] [--reversed]
 """
 import argparse
 import json
@@ -18,7 +18,7 @@ from .cache import AnswerCache, question_hash
 from .cli import CLAUDE_MODEL, ENGINES, load_plan, rank
 from .config import ROOT, load_env
 
-PRICE_IN, PRICE_OUT = 5.00, 25.00  # $/MTok, Claude Opus 5
+PRICES = {"claude-opus-5": (5.00, 25.00), "claude-sonnet-5": (2.00, 10.00), "claude-haiku-4-5": (1.00, 5.00)}  # $/MTok in, out
 
 
 def describe(q: dict) -> str:
@@ -37,6 +37,7 @@ def main():
     ap.add_argument("--plan", required=True)
     ap.add_argument("--podcast")
     ap.add_argument("--reversed", action="store_true", help="list the episodes in reverse order")
+    ap.add_argument("--model", default=CLAUDE_MODEL, choices=sorted(PRICES))
     args = ap.parse_args()
 
     query, plan = load_plan(args.plan)
@@ -61,7 +62,7 @@ def main():
     client = anthropic.Anthropic()
     t0 = time.perf_counter()
     with client.beta.messages.stream(
-        model=CLAUDE_MODEL,
+        model=args.model,
         max_tokens=32000,
         betas=["server-side-fallback-2026-07-01"],
         fallbacks="default",
@@ -77,7 +78,8 @@ def main():
     if msg.stop_reason == "refusal":
         raise SystemExit("Claude declined.")
     u = msg.usage
-    cost = u.input_tokens * PRICE_IN / 1e6 + u.output_tokens * PRICE_OUT / 1e6
+    price_in, price_out = PRICES[args.model]
+    cost = u.input_tokens * price_in / 1e6 + u.output_tokens * price_out / 1e6
     rows = json.loads(next(b.text for b in msg.content if b.type == "text"))["episodes"]
 
     # completeness and validity
@@ -92,7 +94,7 @@ def main():
             if not 0 <= r[q["id"]] <= hi:
                 bad += 1
     missing = [i for i in range(len(episodes)) if i not in by_id]
-    print(f"Claude ({CLAUDE_MODEL}, {'reversed' if args.reversed else 'feed'} order): {seconds:.0f}s, "
+    print(f"Claude ({args.model}, answered by {msg.model}, {'reversed' if args.reversed else 'feed'} order): {seconds:.0f}s, "
           f"{u.input_tokens:,} in / {u.output_tokens:,} out, ${cost:.3f}, stop={msg.stop_reason}")
     print(f"returned {len(rows)} rows for {len(episodes)} episodes: {len(missing)} missing, {dupes} duplicates, "
           f"{bad} out-of-range values")
@@ -150,8 +152,9 @@ def main():
                 t = {g[x["id"]] for x in r["top"]}
                 print(f"overlap with the top-10 call ({r['order']} order): {len(t & set(cc[:10]))}/10")
 
-    (ROOT / f"last_one_call_scores{'_reversed' if args.reversed else ''}.json").write_text(json.dumps(
-        {"plan": args.plan, "order": "reversed" if args.reversed else "feed", "seconds": seconds,
+    suffix = ("" if args.model == CLAUDE_MODEL else "_" + args.model) + ("_reversed" if args.reversed else "")
+    (ROOT / f"last_one_call_scores{suffix}.json").write_text(json.dumps(
+        {"plan": args.plan, "model": args.model, "answered_by": msg.model, "order": "reversed" if args.reversed else "feed", "seconds": seconds,
          "input_tokens": u.input_tokens, "output_tokens": u.output_tokens, "cost": cost,
          "missing": missing, "rows": rows}, indent=1))
 
