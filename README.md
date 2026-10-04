@@ -54,6 +54,7 @@ podcast-search spotify-link                              # match episodes to Spo
 podcast-search save 1-5 [--json]                         # save results to Your Episodes, confirmed against your library
 
 uv run python -m podcast_search.one_call "your query"   # baseline: one Claude call over the whole catalogue
+uv run python -m podcast_search.one_call_scores --plan NAME   # baseline: one Claude call scoring every episode on a plan
 ```
 
 ## How answers are cached
