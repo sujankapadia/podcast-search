@@ -46,7 +46,7 @@ podcast-search search --plan-file plan.json [--json]     # a plan you or your ag
 podcast-search search --plan NAME [--json]               # a saved plan
 podcast-search search "your query" [--explain]           # Claude writes the plan
    common options: --podcast SLUG  --save-plan NAME  --top 10
-   --engine: jev (default) | mercury, d1, solar, or-jev (OpenRouter) | jebadiah-9b, decider-4b, decider-2b (local)
+   --engine: jev (default) | mercury, d1, solar, luna, or-jev (OpenRouter) | jebadiah-9b, decider-4b, decider-2b (local)
 
 podcast-search episode 1-5 [--json]                      # summaries and links for results of the last search
 podcast-search spotify-login                             # once

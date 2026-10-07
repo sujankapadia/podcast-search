@@ -54,6 +54,9 @@ ENGINES = {
                     "key_env": "OPENROUTER_API_KEY", "price": 0.040, "rate": 10, "local": False},
     "solar":       {"base_url": "https://openrouter.ai/api", "api_model": "upstage/solar-decide", "model": "or:upstage/solar-decide",
                     "key_env": "OPENROUTER_API_KEY", "price": 0.050, "rate": 10, "local": False},
+    # OpenAI's decisions model (GPT-6 Luna), served on OpenRouter's /v1/systemone. $0.10/M input per OpenAI's docs.
+    "luna":        {"base_url": "https://openrouter.ai/api", "api_model": "openai/gpt-6-luna-decisions",
+                    "model": "or:openai/gpt-6-luna-decisions", "key_env": "OPENROUTER_API_KEY", "price": 0.10, "rate": 10, "local": False},
     # Local servers (see README); slow on a laptop.
     "jebadiah-9b": {"base_url": "http://localhost:8100", "model": "jebadiah-9b-v2-mlx8", "local": True},
     "decider-4b":  {"base_url": "http://localhost:8001", "model": "decider-4b-v2.1", "local": True},
